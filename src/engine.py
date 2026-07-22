@@ -14,11 +14,43 @@ except ImportError:
     def count_neighbors(grid, row, col):
         return 0
 
+if os.name == 'nt':
+    import msvcrt
+    def setup_terminal():
+        return None
+    def restore_terminal(settings):
+        pass
+    def check_input():
+        if msvcrt.kbhit():
+            try:
+                return msvcrt.getch().decode('utf-8', 'ignore').lower()
+            except:
+                pass
+        return None
+else:
+    import select
+    import termios
+    import tty
+    def setup_terminal():
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        return old_settings
+    def restore_terminal(settings):
+        if settings:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, settings)
+    def check_input():
+        if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+            return sys.stdin.read(1).lower()
+        return None
+
 COLOR_BORDER = '\033[38;5;51m'
 COLOR_TITLE = '\033[1;38;5;226m'
 COLOR_STATS = '\033[38;5;250m'
 COLOR_DEAD = '\033[38;5;236m'
 COLOR_MUTED = '\033[38;5;239m'
+COLOR_PLAY = '\033[38;5;46m'
+COLOR_PAUSE = '\033[38;5;196m'
 RESET = '\033[0m'
 
 CHAR_ALIVE = '██'
@@ -46,7 +78,7 @@ def get_heatmap_color(grid, r, c):
     else:
         return '\033[38;5;196m'
 
-def print_grid(grid, generation, speed, seed_type, first_frame=False):
+def print_grid(grid, generation, seed_type, paused, first_frame=False):
     clear_screen(first_frame)
     
     term_cols, term_lines = shutil.get_terminal_size((80, 24))
@@ -59,7 +91,6 @@ def print_grid(grid, generation, speed, seed_type, first_frame=False):
     pad_top_lines = max(0, (term_lines - (rows + 6)) // 2)
     
     output = []
-    
     output.extend([""] * pad_top_lines)
     
     output.append(f"{pad_left_str}{COLOR_BORDER}╭{'─' * box_width}╮{RESET}")
@@ -68,10 +99,14 @@ def print_grid(grid, generation, speed, seed_type, first_frame=False):
     t_pad = (box_width - len(title)) // 2
     output.append(f"{pad_left_str}{COLOR_BORDER}│{' ' * t_pad}{COLOR_TITLE}{title}{COLOR_BORDER}{' ' * (box_width - len(title) - t_pad)}│{RESET}")
     
-    stats = f" Gen: {generation:05d} | Tick: {speed}s | Seed: {seed_type.upper()} "
-    s_pad = (box_width - len(stats)) // 2
-    output.append(f"{pad_left_str}{COLOR_BORDER}│{COLOR_STATS}{' ' * s_pad}{stats}{' ' * (box_width - len(stats) - s_pad)}{COLOR_BORDER}│{RESET}")
+    status_text = "PAUSED " if paused else "PLAYING"
+    stats_raw = f" Gen: {generation:05d} | State: {status_text} | Seed: {seed_type.upper()} "
+    s_pad = (box_width - len(stats_raw)) // 2
     
+    status_colored = f"{COLOR_PAUSE}PAUSED {COLOR_STATS}" if paused else f"{COLOR_PLAY}PLAYING{COLOR_STATS}"
+    stats_colored = f" Gen: {generation:05d} | State: {status_colored} | Seed: {seed_type.upper()} "
+    
+    output.append(f"{pad_left_str}{COLOR_BORDER}│{COLOR_STATS}{' ' * s_pad}{stats_colored}{' ' * (box_width - len(stats_raw) - s_pad)}{COLOR_BORDER}│{RESET}")
     output.append(f"{pad_left_str}{COLOR_BORDER}├{'─' * box_width}┤{RESET}")
     
     for r, row in enumerate(grid):
@@ -87,7 +122,7 @@ def print_grid(grid, generation, speed, seed_type, first_frame=False):
         
     output.append(f"{pad_left_str}{COLOR_BORDER}╰{'─' * box_width}╯{RESET}")
     
-    instr = "Press Ctrl+C to exit"
+    instr = "Press [SPACE] to Play/Pause, [Q] to Quit"
     i_pad = " " * max(0, (term_cols - len(instr)) // 2)
     output.append(f"{i_pad}{COLOR_MUTED}{instr}{RESET}")
     
@@ -138,6 +173,10 @@ def main():
     
     last_term_size = shutil.get_terminal_size((80, 24))
     first_frame = True
+    paused = True
+    last_tick_time = time.time()
+    
+    term_settings = setup_terminal()
     
     try:
         while True:
@@ -146,20 +185,32 @@ def main():
                 first_frame = True
                 last_term_size = current_term_size
 
-            print_grid(grid, generation, TICK_SPEED, SEED_TYPE, first_frame)
+            key = check_input()
+            if key == ' ':
+                paused = not paused
+            elif key == 'q' or key == '\x03':
+                break
+
+            print_grid(grid, generation, SEED_TYPE, paused, first_frame)
             first_frame = False
             
-            grid = compute_next_generation(grid)
-            
-            generation += 1
-            time.sleep(TICK_SPEED)
+            now = time.time()
+            if not paused and (now - last_tick_time) >= TICK_SPEED:
+                grid = compute_next_generation(grid)
+                generation += 1
+                last_tick_time = now
+                
+            time.sleep(0.03)
             
     except KeyboardInterrupt:
-        print(f"\n{COLOR_BORDER}Simulation stopped by user.{RESET}\n")
+        pass
     except Exception as e:
         print(f"\n\033[91m[!] An error occurred during simulation:\033[0m")
         print(f"{e}")
         print("\nCheck your compute_next_generation logic in solver.py!")
+    finally:
+        restore_terminal(term_settings)
+        print(f"\n{COLOR_BORDER}Simulation stopped.{RESET}\n")
 
 if __name__ == '__main__':
     main()
