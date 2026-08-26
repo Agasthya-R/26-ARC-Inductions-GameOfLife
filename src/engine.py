@@ -77,7 +77,7 @@ def get_heatmap_color(grid, r, c):
         return '\033[38;5;51m'
     else:
         return '\033[38;5;196m'
-
+ 
 def print_grid(grid, generation, seed_type, paused, first_frame=False):
     clear_screen(first_frame)
     
